@@ -1,11 +1,16 @@
+// server.js
 const express = require('express')
 const crypto = require('crypto')
 const app = express()
 
+// Middleware to parse URL-encoded and JSON payloads
 app.use(express.urlencoded({ extended: false }))
+app.use(express.json())
 
+// In-memory storage for users and their exercise logs
 const users = []
 
+// Serve the frontend HTML
 app.get('/', (req, res) => {
 	res.send(`
     <!DOCTYPE html>
@@ -88,58 +93,101 @@ app.get('/', (req, res) => {
   `)
 })
 
+// POST /api/users - Create a new user
 app.post('/api/users', (req, res) => {
 	const { username } = req.body
-	if (!username) return res.status(400).send('Username is required')
+	if (!username || typeof username !== 'string') {
+		return res.status(400).send('Username is required and must be a string')
+	}
 	const _id = crypto.randomBytes(12).toString('hex')
 	const user = { username, _id, log: [] }
 	users.push(user)
 	res.json({ username, _id })
 })
 
+// GET /api/users - Get all users
 app.get('/api/users', (req, res) => {
 	res.json(users.map((u) => ({ username: u.username, _id: u._id })))
 })
 
+// POST /api/users/:_id/exercises - Add an exercise
 app.post('/api/users/:_id/exercises', (req, res) => {
 	const { _id } = req.params
 	const { description, duration, date } = req.body
-	if (!description || !duration)
-		return res.status(400).send('Description and duration are required')
+
+	// Validate inputs
+	if (!description || typeof description !== 'string') {
+		return res.status(400).send('Description is required and must be a string')
+	}
+	if (!duration || isNaN(Number(duration))) {
+		return res.status(400).send('Duration is required and must be a number')
+	}
+
 	const dur = Number(duration)
-	if (isNaN(dur)) return res.status(400).send('Duration must be a number')
 	const user = users.find((u) => u._id === _id)
-	if (!user) return res.status(404).send('User not found')
+	if (!user) {
+		return res.status(404).send('User not found')
+	}
+
+	// Handle date (use current date if not provided)
 	let exDate = date ? new Date(date) : new Date()
-	if (isNaN(exDate.getTime())) return res.status(400).send('Invalid date')
-	const exercise = { description, duration: dur, date: exDate.toDateString() }
+	if (isNaN(exDate.getTime())) {
+		return res.status(400).send('Invalid date format')
+	}
+
+	const exercise = {
+		description,
+		duration: dur,
+		date: exDate.toDateString(),
+	}
+
 	user.log.push(exercise)
-	res.json({ ...exercise, username: user.username, _id: user._id })
+	res.json({ ...exercise, username: user.username, _id })
 })
 
+// GET /api/users/:_id/logs - Get user exercise log
 app.get('/api/users/:_id/logs', (req, res) => {
 	const { _id } = req.params
 	const { from, to, limit } = req.query
+
 	const user = users.find((u) => u._id === _id)
-	if (!user) return res.status(404).send('User not found')
+	if (!user) {
+		return res.status(404).send('User not found')
+	}
+
 	let log = [...user.log]
+
+	// Apply date filters
 	if (from) {
 		const fromDate = new Date(from)
-		if (!isNaN(fromDate.getTime()))
+		if (!isNaN(fromDate.getTime())) {
 			log = log.filter((ex) => new Date(ex.date) >= fromDate)
+		}
 	}
 	if (to) {
 		const toDate = new Date(to)
-		if (!isNaN(toDate.getTime()))
+		if (!isNaN(toDate.getTime())) {
 			log = log.filter((ex) => new Date(ex.date) <= toDate)
+		}
 	}
+
+	// Apply limit
 	if (limit) {
 		const lim = parseInt(limit, 10)
-		if (!isNaN(lim)) log = log.slice(0, lim)
+		if (!isNaN(lim) && lim >= 0) {
+			log = log.slice(0, lim)
+		}
 	}
-	res.json({ username: user.username, _id: user._id, count: log.length, log })
+
+	res.json({
+		username: user.username,
+		_id: user._id,
+		count: log.length,
+		log,
+	})
 })
 
+// Start the server
 const port = process.env.PORT || 3000
 if (!module.parent) {
 	app.listen(port, () => console.log(`App listening on port ${port}`))
